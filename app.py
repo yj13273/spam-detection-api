@@ -1,49 +1,39 @@
-from flask import Flask, request, jsonify
-import joblib
-from flask_cors import CORS
+import gradio as gr
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)  # Optional: allows frontend from other domains to access this
+# Load data
+url = "https://raw.githubusercontent.com/yj13273/spam-detection-ml/main/spam_data.csv"
+df = pd.read_csv(url, encoding='latin1')[["v1", "v2"]]
+df.columns = ["Category", "Message"]
 
-# Load model and vectorizer
-try:
-    model = joblib.load("model.pkl")
-    vectorizer = joblib.load("vectorizer.pkl")
-except Exception as e:
-    raise Exception(f"Error loading model or vectorizer: {e}")
+# Preprocess
+df["Category"] = df["Category"].map({"ham": 1, "spam": 0})
+X = df["Message"]
+y = df["Category"].astype(int)
 
-# Token for simple authentication
-AUTH_TOKEN = "your-secret-token"  # 🔐 Change this to something strong!
+# Train
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+vectorizer = TfidfVectorizer(stop_words="english")
+X_train_vec = vectorizer.fit_transform(X_train)
+model = LogisticRegression()
+model.fit(X_train_vec, y_train)
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"message": "Spam Detection API is running ✅"}), 200
+# Predict
+def predict_mail(text):
+    vec = vectorizer.transform([text])
+    pred = model.predict(vec)[0]
+    return "✅ HAM MAIL" if pred == 1 else "🚫 SPAM MAIL"
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    # Token-based auth
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer ") or auth_header.split(" ")[1] != AUTH_TOKEN:
-        return jsonify({"error": "Unauthorized access"}), 401
+# Gradio UI
+interface = gr.Interface(
+    fn=predict_mail,
+    inputs=gr.Textbox(lines=3, placeholder="Enter email content..."),
+    outputs="text",
+    title="Spam Detection Model",
+    description="Enter an email message to check whether it's SPAM or HAM."
+)
 
-    # Parse incoming JSON
-    try:
-        data = request.get_json(force=True)
-        text = data.get("text", "").strip()
-        if not text:
-            return jsonify({"error": "No input text provided"}), 400
-    except:
-        return jsonify({"error": "Invalid JSON format"}), 400
-
-    # Predict
-    try:
-        features = vectorizer.transform([text])
-        prediction = model.predict(features)[0]
-        result = "HAM" if prediction == 1 else "SPAM"
-        return jsonify({"prediction": result}), 200
-    except Exception as e:
-        return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
-
-if __name__ == "__main__":
-    app.run(debug=True)
+interface.launch()
